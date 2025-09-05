@@ -1,11 +1,17 @@
+# --- hardening ---
 Options -Indexes -MultiViews
-RewriteEngine On
 
-# your app lives in /kever_b, so set the base
-RewriteBase /kever_b/
+# --- rewrites for the app folder ---
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /bombardier_kigotho/
 
-# pretty agent URLs: /kever_b/a/agent-one-9f3c
-RewriteRule ^a/([A-Za-z0-9_-]+)/?$ agent/login.php?slug=$1 [L,QSA]
+  # Pretty agent URLs when accessed with the subfolder prefix:
+  # https://bombardier.romulus.website/bombardier_kigotho/a/{slug}
+  RewriteRule ^a/([A-Za-z0-9_-]+)/?$ agent/login.php?slug=$1 [L,QSA]
 
-# (optional) also support a trailing slash-less folder style
-# RewriteRule ^a/?$ agent/login.php [L,QSA]
+  # Don’t rewrite real files/folders
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule . - [L]
+</IfModule>
