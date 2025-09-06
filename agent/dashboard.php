@@ -119,15 +119,23 @@ require_once __DIR__ . '/../includes/navbar.php';
     <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
       <h6 class="mb-0">All My Payment Refs</h6>
       <div class="d-flex align-items-center gap-2">
-        <div class="input-group input-group-sm">
+        <div class="input-group input-group-sm me-2">
           <span class="input-group-text">From</span>
           <input type="date" id="date_from" class="form-control">
           <span class="input-group-text">To</span>
           <input type="date" id="date_to" class="form-control">
           <button class="btn btn-outline-secondary" id="btn_date_clear">Clear</button>
         </div>
+
+        <!-- ⬇️ NEW: Notes keyword search -->
+        <div class="input-group input-group-sm">
+          <span class="input-group-text">Notes</span>
+          <input type="text" id="notes_search" class="form-control" placeholder="Search notes…">
+          <button class="btn btn-outline-secondary" id="btn_notes_clear" type="button">Clear</button>
+        </div>
       </div>
     </div>
+
     <div class="table-responsive" id="wrap_all_refs">
       <table class="table table-sm align-middle" id="tbl_all_refs" style="width:100%">
         <thead>
@@ -534,15 +542,19 @@ require_once __DIR__ . '/../includes/navbar.php';
           type: 'string'
         },
         {
-          data: null,
-          orderable: false,
-          render: row => {
-            const val = esc(row.note || '');
+          data: 'note',
+          className: 'note-wrap',
+          render: function(data, type, row) {
+            // For filtering/sorting, return plain note text
+            if (type !== 'display') return data || '';
+            // For display, render the input + button
+            const val = esc(data || '');
+            const ref = esc(row.invoice_no);
             return `
-            <div class="input-group input-group-sm">
-              <input class="form-control form-control-sm note-input" data-ref="${esc(row.invoice_no)}" value="${val}" placeholder="Add note...">
-              <button class="btn btn-outline-primary btn-sm save-note" data-ref="${esc(row.invoice_no)}">Save</button>
-            </div>`;
+      <div class="input-group input-group-sm">
+        <input class="form-control form-control-sm note-input" data-ref="${ref}" value="${val}" placeholder="Add note...">
+        <button class="btn btn-outline-primary btn-sm save-note" data-ref="${ref}">Save</button>
+      </div>`;
           }
         },
         {
@@ -574,24 +586,48 @@ require_once __DIR__ . '/../includes/navbar.php';
       buttons: [{
           extend: 'csvHtml5',
           className: 'btn btn-outline-secondary btn-sm',
-          title: 'all_refs'
+          title: 'all_refs',
+          footer: true,
+          exportOptions: {
+            modifier: {
+              search: 'applied'
+            }
+          }
         },
         {
           extend: 'excelHtml5',
           className: 'btn btn-outline-secondary btn-sm',
-          title: 'all_refs'
+          title: 'all_refs',
+          footer: true,
+          exportOptions: {
+            modifier: {
+              search: 'applied'
+            }
+          }
         },
         {
           extend: 'pdfHtml5',
           className: 'btn btn-outline-secondary btn-sm',
           title: 'all_refs',
+          footer: true,
+          exportOptions: {
+            modifier: {
+              search: 'applied'
+            }
+          },
           orientation: 'landscape',
           pageSize: 'A4'
         },
         {
           extend: 'print',
           className: 'btn btn-outline-secondary btn-sm',
-          title: 'All My Payment Refs'
+          title: 'All My Payment Refs',
+          footer: true,
+          exportOptions: {
+            modifier: {
+              search: 'applied'
+            }
+          }
         },
         {
           extend: 'colvis',
@@ -600,16 +636,33 @@ require_once __DIR__ . '/../includes/navbar.php';
         }
       ],
       footerCallback: function(row, data, start, end, display) {
+        const api = this.api();
         let totalSum = 0,
           commSum = 0;
-        for (const r of data) {
+
+        // Sum over all rows with the current search applied (not just current page)
+        api.rows({
+          search: 'applied'
+        }).data().each(function(r) {
+          // r is the original row object we fed to DataTables
           totalSum += parseFloat(r.total_amount || 0);
           commSum += parseFloat(r.commission_value || 0);
-        }
+        });
+
         $('#ft_total').text(money(totalSum));
         $('#ft_commission').text(money(commSum));
       }
+
     });
+    // Column index of Notes = 9 (0-based)
+    $('#notes_search').on('input', function() {
+      dt.column(9).search(this.value).draw();
+    });
+    $('#btn_notes_clear').on('click', function() {
+      $('#notes_search').val('');
+      dt.column(9).search('').draw();
+    });
+
 
     // Custom date-range filter on Last (column index 3)
     $.fn.dataTable.ext.search.push(function(settings, data, dataIndex) {
