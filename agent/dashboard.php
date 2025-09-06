@@ -168,7 +168,7 @@ require_once __DIR__ . '/../includes/navbar.php';
             <th></th>
             <th></th>
             <th></th>
-            <th style="display:none;"></th>
+            <th style="display:nonee;"></th>
           </tr>
         </tfoot>
       </table>
