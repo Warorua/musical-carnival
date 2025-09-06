@@ -34,11 +34,40 @@ function safe_fetch_one(string $sql, array $p = [])
     return $st->fetch();
 }
 
+/* --- derive logged-in agent's client_id robustly --- */
+function current_client_id(): int
+{
+    $cid = (int)($_SESSION['agent_client_id'] ?? 0);
+    if ($cid > 0) return $cid;
+
+    // try agents_auth.id
+    $aid = (int)($_SESSION['agent_id'] ?? 0);
+    if ($aid > 0) {
+        $row = safe_fetch_one('SELECT client_id FROM agents_auth WHERE id=? LIMIT 1', [$aid]);
+        if ($row && isset($row['client_id'])) {
+            $_SESSION['agent_client_id'] = (int)$row['client_id'];
+            return (int)$row['client_id'];
+        }
+    }
+    // try agents_auth.url_slug
+    $slug = $_SESSION['agent_slug'] ?? null;
+    if ($slug) {
+        $row = safe_fetch_one('SELECT client_id FROM agents_auth WHERE url_slug=? LIMIT 1', [$slug]);
+        if ($row && isset($row['client_id'])) {
+            $_SESSION['agent_client_id'] = (int)$row['client_id'];
+            return (int)$row['client_id'];
+        }
+    }
+    return 0;
+}
+
 try {
     if (!agent_logged_in()) respond(['ok' => false, 'error' => 'Not logged in'], 401);
 
     $action = $_GET['action'] ?? '';
-    $cid = (int)($_SESSION['agent_client_id'] ?? 0);
+    $cid = current_client_id();
+    if ($cid <= 0) respond(['ok' => false, 'error' => 'Session missing client context'], 401);
+
     $agentNameRow = safe_fetch_one('SELECT name FROM clients WHERE id=? LIMIT 1', [$cid]);
     $agentName = $agentNameRow['name'] ?? '';
 
@@ -241,8 +270,8 @@ try {
 
             GROUP BY t.invoice_no
             ORDER BY sort_id DESC",
-            // params
-           [$cid, $cid, $cid, $cid, $cid, $cid, $cid, $cid, $cid]
+            // 1    2    3    4    5    6    7    8    9  (nine params)
+            [$cid, $cid, $cid, $cid, $cid, $cid, $cid, $cid, $cid]
         );
         respond(['ok' => true, 'data' => $all]);
     }
@@ -324,7 +353,7 @@ try {
         respond(['ok' => true]);
     }
 
-    /* ===== NEW: set paid status (not_paid / partial / paid) ===== */
+    /* ===== set paid status (not_paid / partial / paid) ===== */
     if ($action === 'set_paid_status' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!csrf_check($_POST['csrf'] ?? '')) respond(['ok' => false, 'error' => 'Bad token'], 403);
 
@@ -372,7 +401,7 @@ try {
         ]]);
     }
 
-    /* ===== NEW: set/update a common NOTE for this agent/ref ===== */
+    /* ===== set/update a common NOTE for this agent/ref ===== */
     if ($action === 'set_ref_note' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!csrf_check($_POST['csrf'] ?? '')) respond(['ok' => false, 'error' => 'Bad token'], 403);
 
@@ -380,7 +409,6 @@ try {
         $note = trim($_POST['note'] ?? '');
         if ($invoice_no === '') respond(['ok' => false, 'error' => 'Missing invoice_no']);
 
-        // Update latest existing queue row if present, else insert a minimal row for storing the note
         $row = safe_fetch_one(
             'SELECT id FROM agent_queue WHERE client_id=? AND invoice_no COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci ORDER BY created_at DESC LIMIT 1',
             [$cid, $invoice_no]
