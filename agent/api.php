@@ -242,7 +242,7 @@ try {
             GROUP BY t.invoice_no
             ORDER BY sort_id DESC",
             // params
-            [$cid, $cid, $cid, $cid, $cid, $cid, $cid, $cid]
+           [$cid, $cid, $cid, $cid, $cid, $cid, $cid, $cid, $cid]
         );
         respond(['ok' => true, 'data' => $all]);
     }
