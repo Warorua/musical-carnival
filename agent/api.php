@@ -118,13 +118,13 @@ try {
                        FROM bypass b
                        JOIN clients c2 ON c2.id=aq.client_id
                       WHERE b.invoice_no COLLATE utf8mb4_unicode_ci = aq.invoice_no COLLATE utf8mb4_unicode_ci
-                        AND b.client     COLLATE utf8mb4_unicode_ci = c2.name COLLATE utf8mb4_unicode_ci
+                        AND b.client     COLLATE utf8mb4_unicode_ci = c2.name   COLLATE utf8mb4_unicode_ci
                     ) AS linked_amount,
                     (SELECT COUNT(*)
                        FROM bypass b
                        JOIN clients c2 ON c2.id=aq.client_id
                       WHERE b.invoice_no COLLATE utf8mb4_unicode_ci = aq.invoice_no COLLATE utf8mb4_unicode_ci
-                        AND b.client     COLLATE utf8mb4_unicode_ci = c2.name COLLATE utf8mb4_unicode_ci
+                        AND b.client     COLLATE utf8mb4_unicode_ci = c2.name   COLLATE utf8mb4_unicode_ci
                     ) AS entry_count
                FROM agent_queue aq
               WHERE aq.client_id=?
@@ -156,139 +156,148 @@ try {
         respond(['ok' => true, 'data' => $rows]);
     }
 
-  if ($action === 'all_refs') {
-    $all = safe_fetch_all(
-        "SELECT
-             t.invoice_no,
-             COALESCE(agg.total_amount,0) AS total_amount,
-             COALESCE(agg.entry_count,0)  AS entry_count,
-             agg.last_seen,
+    /* ===== All refs with sort_id, paid_status, note ===== */
+    if ($action === 'all_refs') {
+        $all = safe_fetch_all(
+            "SELECT
+                 t.invoice_no,
 
-             -- latest IDs from each source
-             aq_last.aq_last_id,
-             bl.b_last_id,
-             GREATEST(COALESCE(aq_last.aq_last_id,0), COALESCE(bl.b_last_id,0)) AS sort_id,
+                 COALESCE(agg.total_amount,0) AS total_amount,
+                 COALESCE(agg.entry_count,0)  AS entry_count,
+                 agg.last_seen,
 
-             -- latest queue data and commission
-             aq_latest.declared_amount,
-             aq_latest.commission_pct   AS aq_commission_pct,
-             aq_latest.declared_paid,
-             cm.commission_pct          AS final_commission_pct
+                 aq_last.aq_last_id,
+                 bl.b_last_id,
+                 GREATEST(COALESCE(aq_last.aq_last_id,0), COALESCE(bl.b_last_id,0)) AS sort_id,
 
-         FROM (
-              SELECT invoice_no FROM agent_queue WHERE client_id=?
-              UNION
-              SELECT b.invoice_no
-                FROM bypass b
-                JOIN clients c
-                  ON c.id=? AND c.name COLLATE utf8mb4_unicode_ci = b.client COLLATE utf8mb4_unicode_ci
-         ) t
+                 aq_latest.declared_amount,
+                 aq_latest.commission_pct     AS aq_commission_pct,
+                 aq_latest.declared_paid,
+                 aq_latest.note                AS note,
 
-         -- agent-owned totals/last_seen
-         LEFT JOIN (
-              SELECT b.invoice_no,
-                     COUNT(*) AS entry_count,
-                     COALESCE(SUM(b.amount),0) AS total_amount,
-                     MAX(b.timestamp) AS last_seen
-                FROM bypass b
-                JOIN clients c
-                  ON c.id=? AND c.name COLLATE utf8mb4_unicode_ci = b.client COLLATE utf8mb4_unicode_ci
-               GROUP BY b.invoice_no
-         ) agg
-           ON agg.invoice_no COLLATE utf8mb4_unicode_ci = t.invoice_no COLLATE utf8mb4_unicode_ci
+                 cm.commission_pct            AS final_commission_pct,
 
-         -- latest agent_queue.id per ref
-         LEFT JOIN (
-              SELECT x.invoice_no, MAX(x.id) AS aq_last_id
-                FROM agent_queue x
-               WHERE x.client_id=?
-               GROUP BY x.invoice_no
-         ) aq_last
-           ON aq_last.invoice_no COLLATE utf8mb4_unicode_ci = t.invoice_no COLLATE utf8mb4_unicode_ci
+                 ars.status                   AS paid_status,
+                 ars.partial_amount           AS partial_amount
 
-         -- latest bypass.id per ref (agent-owned)
-         LEFT JOIN (
-              SELECT b.invoice_no, MAX(b.id) AS b_last_id
-                FROM bypass b
-                JOIN clients c
-                  ON c.id=? AND c.name COLLATE utf8mb4_unicode_ci = b.client COLLATE utf8mb4_unicode_ci
-               GROUP BY b.invoice_no
-         ) bl
-           ON bl.invoice_no COLLATE utf8mb4_unicode_ci = t.invoice_no COLLATE utf8mb4_unicode_ci
+            FROM (
+                 SELECT invoice_no FROM agent_queue WHERE client_id=?
+                 UNION
+                 SELECT b.invoice_no
+                   FROM bypass b
+                   JOIN clients c
+                     ON c.id=? AND c.name COLLATE utf8mb4_unicode_ci = b.client COLLATE utf8mb4_unicode_ci
+            ) t
 
-         -- latest queue row (for declared_amount / queue % / paid)
-         LEFT JOIN (
-              SELECT y.*
-                FROM agent_queue y
-               WHERE y.client_id=?
-               ORDER BY y.created_at DESC
-         ) aq_latest
-           ON aq_latest.invoice_no COLLATE utf8mb4_unicode_ci = t.invoice_no COLLATE utf8mb4_unicode_ci
+            LEFT JOIN (
+                 SELECT b.invoice_no,
+                        COUNT(*) AS entry_count,
+                        COALESCE(SUM(b.amount),0) AS total_amount,
+                        MAX(b.timestamp) AS last_seen
+                   FROM bypass b
+                   JOIN clients c
+                     ON c.id=? AND c.name COLLATE utf8mb4_unicode_ci = b.client COLLATE utf8mb4_unicode_ci
+                  GROUP BY b.invoice_no
+            ) agg
+              ON agg.invoice_no COLLATE utf8mb4_unicode_ci = t.invoice_no COLLATE utf8mb4_unicode_ci
 
-         -- finalized commission
-         LEFT JOIN commissions cm
-           ON cm.client_id=? AND cm.invoice_no COLLATE utf8mb4_unicode_ci = t.invoice_no COLLATE utf8mb4_unicode_ci
+            LEFT JOIN (
+                 SELECT x.invoice_no, MAX(x.id) AS aq_last_id
+                   FROM agent_queue x
+                  WHERE x.client_id=?
+                  GROUP BY x.invoice_no
+            ) aq_last
+              ON aq_last.invoice_no COLLATE utf8mb4_unicode_ci = t.invoice_no COLLATE utf8mb4_unicode_ci
 
-         GROUP BY t.invoice_no
-         ORDER BY sort_id DESC",
-        [$cid,$cid,$cid,$cid,$cid,$cid,$cid]
-    );
-    respond(['ok'=>true,'data'=>$all]);
-}
+            LEFT JOIN (
+                 SELECT b.invoice_no, MAX(b.id) AS b_last_id
+                   FROM bypass b
+                   JOIN clients c
+                     ON c.id=? AND c.name COLLATE utf8mb4_unicode_ci = b.client COLLATE utf8mb4_unicode_ci
+                  GROUP BY b.invoice_no
+            ) bl
+              ON bl.invoice_no COLLATE utf8mb4_unicode_ci = t.invoice_no COLLATE utf8mb4_unicode_ci
 
+            /* latest AQ row per (client, invoice) for declared_amount/commission/note */
+            LEFT JOIN (
+                 SELECT a1.invoice_no, a1.declared_amount, a1.commission_pct, a1.declared_paid, a1.note, a1.created_at
+                   FROM agent_queue a1
+                   JOIN (
+                      SELECT invoice_no, MAX(created_at) AS mx
+                        FROM agent_queue
+                       WHERE client_id=?
+                       GROUP BY invoice_no
+                   ) a2
+                     ON a2.invoice_no = a1.invoice_no AND a2.mx = a1.created_at
+                  WHERE a1.client_id=?
+            ) aq_latest
+              ON aq_latest.invoice_no COLLATE utf8mb4_unicode_ci = t.invoice_no COLLATE utf8mb4_unicode_ci
 
-   if ($action === 'ref_entries') {
-    $ref = trim($_GET['invoice_no'] ?? '');
-    if ($ref==='') respond(['ok'=>false,'error'=>'Missing ref'], 400);
+            LEFT JOIN commissions cm
+              ON cm.client_id=? AND cm.invoice_no COLLATE utf8mb4_unicode_ci = t.invoice_no COLLATE utf8mb4_unicode_ci
 
-    // agent-owned entries (timestamp + amount + receipt_msg)
-    $rows = safe_fetch_all(
-        'SELECT b.timestamp, b.amount, b.receipt_msg AS receipt_msg
-           FROM bypass b
-           JOIN clients c ON c.id=? AND c.name COLLATE utf8mb4_unicode_ci = b.client COLLATE utf8mb4_unicode_ci
-          WHERE b.invoice_no COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci
-          ORDER BY b.timestamp ASC',
-        [$cid,$ref]
-    );
+            LEFT JOIN agent_ref_status ars
+              ON ars.client_id=? AND ars.invoice_no COLLATE utf8mb4_unicode_ci = t.invoice_no COLLATE utf8mb4_unicode_ci
 
-    // total + saved paid status (unchanged logic)
-    $totRow = safe_fetch_one(
-        'SELECT COALESCE(SUM(b.amount),0) AS total
-           FROM bypass b
-           JOIN clients c ON c.id=? AND c.name COLLATE utf8mb4_unicode_ci = b.client COLLATE utf8mb4_unicode_ci
-          WHERE b.invoice_no COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci',
-        [$cid,$ref]
-    );
-    $total = (float)($totRow['total'] ?? 0);
-    $st = safe_fetch_one(
-        'SELECT status, partial_amount
-           FROM agent_ref_status
-          WHERE client_id=? AND invoice_no COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci
-          LIMIT 1',
-        [$cid,$ref]
-    );
-    $status = $st['status'] ?? 'not_paid';
-    $partial = (float)($st['partial_amount'] ?? 0);
-    $paid = ($status==='paid') ? $total : (($status==='partial') ? min($partial,$total) : 0.0);
-    $balance = max(0.0, $total - $paid);
+            GROUP BY t.invoice_no
+            ORDER BY sort_id DESC",
+            // params
+            [$cid, $cid, $cid, $cid, $cid, $cid, $cid, $cid]
+        );
+        respond(['ok' => true, 'data' => $all]);
+    }
 
-    respond(['ok'=>true,'data'=>$rows,'meta'=>[
-        'total_amount'=>$total,
-        'paid_status'=>$status,
-        'partial_amount'=>$partial,
-        'paid'=>$paid,
-        'balance'=>$balance
-    ]]);
-}
+    /* ===== Ref entries: timestamp + amount + receipt_msg ===== */
+    if ($action === 'ref_entries') {
+        $ref = trim($_GET['invoice_no'] ?? '');
+        if ($ref === '') respond(['ok' => false, 'error' => 'Missing ref'], 400);
 
+        $rows = safe_fetch_all(
+            'SELECT b.timestamp, b.amount, b.receipt_msg AS receipt_msg
+               FROM bypass b
+               JOIN clients c ON c.id=? AND c.name COLLATE utf8mb4_unicode_ci = b.client COLLATE utf8mb4_unicode_ci
+              WHERE b.invoice_no COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci
+              ORDER BY b.timestamp ASC',
+            [$cid, $ref]
+        );
 
+        $totRow = safe_fetch_one(
+            'SELECT COALESCE(SUM(b.amount),0) AS total
+               FROM bypass b
+               JOIN clients c ON c.id=? AND c.name COLLATE utf8mb4_unicode_ci = b.client COLLATE utf8mb4_unicode_ci
+              WHERE b.invoice_no COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci',
+            [$cid, $ref]
+        );
+        $total = (float)($totRow['total'] ?? 0);
+        $st = safe_fetch_one(
+            'SELECT status, partial_amount
+               FROM agent_ref_status
+              WHERE client_id=? AND invoice_no COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci
+              LIMIT 1',
+            [$cid, $ref]
+        );
+        $status = $st['status'] ?? 'not_paid';
+        $partial = (float)($st['partial_amount'] ?? 0);
+        $paid = ($status === 'paid') ? $total : (($status === 'partial') ? min($partial, $total) : 0.0);
+        $balance = max(0.0, $total - $paid);
+
+        respond(['ok' => true, 'data' => $rows, 'meta' => [
+            'total_amount' => $total,
+            'paid_status' => $status,
+            'partial_amount' => $partial,
+            'paid' => $paid,
+            'balance' => $balance
+        ]]);
+    }
+
+    /* ===== Add ref to queue ===== */
     if ($action === 'add_ref' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!csrf_check($_POST['csrf'] ?? '')) respond(['ok' => false, 'error' => 'Bad token'], 403);
         $invoice_no = trim($_POST['invoice_no'] ?? '');
         if ($invoice_no === '') respond(['ok' => false, 'error' => 'Ref required']);
         $declared_amount = $_POST['declared_amount'] !== '' ? (float)$_POST['declared_amount'] : null;
-        $commission_pct = $_POST['commission_pct'] !== '' ? (float)$_POST['commission_pct'] : null;
-        $declared_paid = isset($_POST['declared_paid']) ? 1 : 0;
+        $commission_pct  = $_POST['commission_pct']  !== '' ? (float)$_POST['commission_pct']  : null;
+        $declared_paid   = isset($_POST['declared_paid']) ? 1 : 0;
         $note = trim($_POST['note'] ?? '');
         $st = db()->prepare(
             'INSERT INTO agent_queue (client_id,invoice_no,declared_amount,commission_pct,declared_paid,note,status,created_at)
@@ -298,6 +307,7 @@ try {
         respond(['ok' => true, 'data' => ['id' => db()->lastInsertId()]]);
     }
 
+    /* ===== Save/override commission % for this agent/ref ===== */
     if ($action === 'set_commission' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!csrf_check($_POST['csrf'] ?? '')) respond(['ok' => false, 'error' => 'Bad token'], 403);
         $invoice_no = trim($_POST['invoice_no'] ?? '');
@@ -314,7 +324,7 @@ try {
         respond(['ok' => true]);
     }
 
-    /* NEW: set_paid_status */
+    /* ===== NEW: set paid status (not_paid / partial / paid) ===== */
     if ($action === 'set_paid_status' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!csrf_check($_POST['csrf'] ?? '')) respond(['ok' => false, 'error' => 'Bad token'], 403);
 
@@ -325,7 +335,6 @@ try {
         if ($invoice_no === '') respond(['ok' => false, 'error' => 'Missing invoice_no']);
         if (!in_array($status, ['not_paid', 'partial', 'paid'], true)) respond(['ok' => false, 'error' => 'Invalid status']);
 
-        // compute the agent-owned total for this ref
         $totRow = safe_fetch_one(
             'SELECT COALESCE(SUM(b.amount),0) AS total
                FROM bypass b
@@ -342,7 +351,6 @@ try {
             $partial = ($status === 'paid') ? $total : 0.0;
         }
 
-        // upsert into agent_ref_status
         $exists = safe_fetch_one(
             'SELECT id FROM agent_ref_status WHERE client_id=? AND invoice_no COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci LIMIT 1',
             [$cid, $invoice_no]
@@ -362,6 +370,32 @@ try {
             'partial' => $partial,
             'balance' => $balance
         ]]);
+    }
+
+    /* ===== NEW: set/update a common NOTE for this agent/ref ===== */
+    if ($action === 'set_ref_note' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        if (!csrf_check($_POST['csrf'] ?? '')) respond(['ok' => false, 'error' => 'Bad token'], 403);
+
+        $invoice_no = trim($_POST['invoice_no'] ?? '');
+        $note = trim($_POST['note'] ?? '');
+        if ($invoice_no === '') respond(['ok' => false, 'error' => 'Missing invoice_no']);
+
+        // Update latest existing queue row if present, else insert a minimal row for storing the note
+        $row = safe_fetch_one(
+            'SELECT id FROM agent_queue WHERE client_id=? AND invoice_no COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci ORDER BY created_at DESC LIMIT 1',
+            [$cid, $invoice_no]
+        );
+        if ($row && !empty($row['id'])) {
+            $u = db()->prepare('UPDATE agent_queue SET note=? WHERE id=?');
+            $u->execute([$note, $row['id']]);
+        } else {
+            $i = db()->prepare(
+                'INSERT INTO agent_queue (client_id, invoice_no, note, status, created_at)
+                 VALUES (?,?,?,?, NOW())'
+            );
+            $i->execute([$cid, $invoice_no, $note, 'awaiting']);
+        }
+        respond(['ok' => true]);
     }
 
     respond(['ok' => false, 'error' => 'Unknown action'], 404);

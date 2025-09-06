@@ -4,6 +4,8 @@ require_agent();
 require_once __DIR__ . '/../includes/head.php';
 require_once __DIR__ . '/../includes/navbar.php';
 ?>
+<link rel="stylesheet" href="https://cdn.datatables.net/1.13.8/css/dataTables.bootstrap5.min.css">
+<link rel="stylesheet" href="https://cdn.datatables.net/buttons/2.4.2/css/buttons.bootstrap5.min.css">
 <style>
   /* Fixed-height scrollable tables */
   .scroll-fixed {
@@ -11,12 +13,25 @@ require_once __DIR__ . '/../includes/navbar.php';
     overflow-y: auto;
   }
 
-  /* Keep table headers visible while scrolling (supported in modern browsers) */
   .table thead th {
     position: sticky;
     top: 0;
     background: #fff;
     z-index: 1;
+  }
+
+  .dt-control {
+    cursor: pointer;
+  }
+
+  .badge-pill {
+    border-radius: 50rem;
+    padding: .35em .6em;
+    font-weight: 600;
+  }
+
+  .note-wrap {
+    min-width: 220px;
   }
 </style>
 
@@ -101,29 +116,53 @@ require_once __DIR__ . '/../includes/navbar.php';
 
 <div class="card shadow-sm mt-3">
   <div class="card-body">
-    <div class="d-flex align-items-center justify-content-between">
-      <h6 class="mb-3">All My Payment Refs</h6>
-      <div class="btn-group btn-group-sm">
-        <button class="btn btn-outline-secondary" id="btn_export_all_csv">CSV</button>
-        <button class="btn btn-outline-secondary" id="btn_export_all_xls">Excel</button>
-        <button class="btn btn-outline-secondary" id="btn_export_all_pdf">PDF</button>
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+      <h6 class="mb-0">All My Payment Refs</h6>
+      <div class="d-flex align-items-center gap-2">
+        <div class="input-group input-group-sm">
+          <span class="input-group-text">From</span>
+          <input type="date" id="date_from" class="form-control">
+          <span class="input-group-text">To</span>
+          <input type="date" id="date_to" class="form-control">
+          <button class="btn btn-outline-secondary" id="btn_date_clear">Clear</button>
+        </div>
       </div>
     </div>
-    <div class="table-responsive scroll-fixed" id="wrap_all_refs">
-      <table class="table table-sm align-middle" id="tbl_all_refs">
+    <div class="table-responsive" id="wrap_all_refs">
+      <table class="table table-sm align-middle" id="tbl_all_refs" style="width:100%">
         <thead>
           <tr>
             <th>Ref</th>
             <th>Total (Mine)</th>
-            <th>Entries (Mine)</th>
+            <th>Entries</th>
             <th>Last</th>
             <th>Declared</th>
             <th>Queue %</th>
             <th>Final %</th>
-            <th></th>
+            <th>Commission</th>
+            <th>Paid</th>
+            <th class="note-wrap">Note</th>
+            <th>Actions</th>
+            <th style="display:none;">sort_id</th>
           </tr>
         </thead>
         <tbody></tbody>
+        <tfoot>
+          <tr>
+            <th class="text-end">Totals (filtered):</th>
+            <th class="text-end" id="ft_total">0.00</th>
+            <th></th>
+            <th></th>
+            <th></th>
+            <th></th>
+            <th></th>
+            <th class="text-end" id="ft_commission">0.00</th>
+            <th></th>
+            <th></th>
+            <th></th>
+            <th style="display:none;"></th>
+          </tr>
+        </tfoot>
       </table>
     </div>
   </div>
@@ -228,17 +267,41 @@ require_once __DIR__ . '/../includes/navbar.php';
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<!-- DataTables + Buttons -->
+<script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.8/js/dataTables.bootstrap5.min.js"></script>
+<script src="https://cdn.datatables.net/buttons/2.4.2/js/dataTables.buttons.min.js"></script>
+<script src="https://cdn.datatables.net/buttons/2.4.2/js/buttons.bootstrap5.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.36/pdfmake.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.36/vfs_fonts.js"></script>
+<script src="https://cdn.datatables.net/buttons/2.4.2/js/buttons.html5.min.js"></script>
+<script src="https://cdn.datatables.net/buttons/2.4.2/js/buttons.print.min.js"></script>
+
 <script>
   let scopeSel = $('#scope');
-  let chart;
-  let currentRef = null;
-  let currentRefTotal = 0;
+  let chart, dt;
+  let currentRef = null,
+    currentRefTotal = 0;
 
   function money(n) {
-    n = +n || 0;
+    n = parseFloat(n || 0);
     return new Intl.NumberFormat().format(n.toFixed(2));
   }
 
+  function pctOrDash(p) {
+    return (p === null || p === undefined || p === '') ? '—' : (parseFloat(p).toFixed(3) + '%');
+  }
+
+  function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, m => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      '\'': '&#39;'
+    } [m]));
+  }
   $.ajaxSetup({
     cache: false
   });
@@ -250,15 +313,15 @@ require_once __DIR__ . '/../includes/navbar.php';
         method: 'GET',
         dataType: 'json'
       })
-      .done(function(r) {
+      .done(r => {
         if (!r || r.ok !== true) {
           alert((r && r.error) || 'API error');
           return;
         }
         onOk(r);
       })
-      .fail(function(xhr) {
-        console.error('AJAX fail', xhr.status, (xhr.responseText || '').slice(0, 200));
+      .fail(xhr => {
+        console.error('AJAX', xhr.status, (xhr.responseText || '').slice(0, 200));
         alert('API error ' + xhr.status);
       });
   }
@@ -270,25 +333,25 @@ require_once __DIR__ . '/../includes/navbar.php';
         method: 'POST',
         dataType: 'json'
       })
-      .done(function(r) {
+      .done(r => {
         if (!r || r.ok !== true) {
           alert((r && r.error) || 'API error');
           return;
         }
         onOk(r);
       })
-      .fail(function(xhr) {
-        console.error('AJAX fail', xhr.status, (xhr.responseText || '').slice(0, 200));
+      .fail(xhr => {
+        console.error('AJAX', xhr.status, (xhr.responseText || '').slice(0, 200));
         alert('API error ' + xhr.status);
       });
   }
 
-  /* KPIs & charts */
+  /* KPIs & chart */
   function loadKpis() {
     ajaxGet('api.php', {
       action: 'kpis',
       scope: scopeSel.val()
-    }, function(r) {
+    }, r => {
       $('#kpi_total').text(money(r.data.total_amount));
       $('#range_label').text(r.data.range[0] + ' → ' + r.data.range[1]);
     });
@@ -297,9 +360,9 @@ require_once __DIR__ . '/../includes/navbar.php';
   function loadWeekChart() {
     ajaxGet('api.php', {
       action: 'week_series'
-    }, function(r) {
-      const labels = r.data.map(x => x.date);
-      const data = r.data.map(x => x.total);
+    }, r => {
+      const labels = r.data.map(x => x.date),
+        data = r.data.map(x => x.total);
       if (chart) chart.destroy();
       chart = new Chart(document.getElementById('chart_week'), {
         type: 'line',
@@ -328,21 +391,20 @@ require_once __DIR__ . '/../includes/navbar.php';
     });
   }
 
-  /* Tables */
+  /* Queue & Discovered (simple tables) */
   function loadQueue() {
     ajaxGet('api.php', {
       action: 'queue_list'
-    }, function(r) {
-      const tb = $('#tbl_queue tbody');
-      tb.empty();
+    }, r => {
+      const tb = $('#tbl_queue tbody').empty();
       r.data.forEach(x => {
         tb.append(`<tr>
         <td>${x.created_at}</td>
         <td>${x.invoice_no}</td>
-        <td>${x.declared_amount!==null && x.declared_amount!=='' ? money(parseFloat(x.declared_amount)):'—'}</td>
+        <td>${x.declared_amount!==null && x.declared_amount!=='' ? money(x.declared_amount):'—'}</td>
         <td>${x.commission_pct ?? '—'}</td>
         <td>${+x.declared_paid===1?'Yes':'No'}</td>
-        <td>${money(parseFloat(x.linked_amount||0))}</td>
+        <td>${money(x.linked_amount||0)}</td>
         <td>${x.entry_count}</td>
       </tr>`);
       });
@@ -352,13 +414,12 @@ require_once __DIR__ . '/../includes/navbar.php';
   function loadDiscovered() {
     ajaxGet('api.php', {
       action: 'discovered'
-    }, function(r) {
-      const tb = $('#tbl_discovered tbody');
-      tb.empty();
+    }, r => {
+      const tb = $('#tbl_discovered tbody').empty();
       r.data.forEach(x => {
         tb.append(`<tr>
         <td>${x.invoice_no}</td>
-        <td>${money(parseFloat(x.total_amount))}</td>
+        <td>${money(x.total_amount)}</td>
         <td>${x.entry_count}</td>
         <td>${x.last_seen}</td>
         <td>
@@ -371,40 +432,6 @@ require_once __DIR__ . '/../includes/navbar.php';
       });
     });
   }
-
-  function loadAllRefs() {
-    ajaxGet('api.php', {
-      action: 'all_refs'
-    }, function(r) {
-      const tb = $('#tbl_all_refs tbody');
-      tb.empty();
-      r.data.forEach(x => {
-        tb.append(`<tr>
-        <td>${x.invoice_no}</td>
-        <td>${money(parseFloat(x.total_amount))}</td>
-        <td>${x.entry_count}</td>
-        <td>${x.last_seen ?? '—'}</td>
-        <td>${x.declared_amount!==null && x.declared_amount!=='' ? money(parseFloat(x.declared_amount)):'—'}</td>
-        <td>${x.aq_commission_pct ?? '—'}</td>
-        <td>${x.final_commission_pct ?? '—'}</td>
-        <td><button class="btn btn-sm btn-outline-primary viewref" data-ref="${x.invoice_no}">View</button></td>
-      </tr>`);
-      });
-    });
-  }
-
-  function esc(s) {
-    return String(s ?? '').replace(/[&<>"']/g, m => ({
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
-      '"': '&quot;',
-      '\'': '&#39;'
-    } [m]));
-  }
-
-
-  /* Commission quick set from Discovered */
   $(document).on('click', '.setpct', function() {
     const ref = $(this).data('ref');
     const pct = $(this).closest('td').find('.pct').val();
@@ -412,14 +439,205 @@ require_once __DIR__ . '/../includes/navbar.php';
       csrf: '<?= csrf_token() ?>',
       invoice_no: ref,
       commission_pct: pct
-    }, function() {
-      loadDiscovered(); // disappears immediately after saving %
-      loadAllRefs(); // reflect final % in the all-refs table
+    }, () => {
+      loadDiscovered();
+      loadAllRefsDT();
       alert('Saved');
     });
   });
 
-  /* Ref detail modal (Timestamp + Amount only) + Paid status UI */
+  /* DataTables: All Refs */
+  function paidBadge(status) {
+    const s = (status || 'not_paid');
+    if (s === 'paid') return '<span class="badge bg-success badge-pill">paid</span>';
+    if (s === 'partial') return '<span class="badge bg-warning text-dark badge-pill">partial</span>';
+    return '<span class="badge bg-danger badge-pill">unpaid</span>';
+  }
+
+  function computeCommission(row) {
+    const total = parseFloat(row.total_amount || 0);
+    const pct = (row.final_commission_pct ?? row.aq_commission_pct);
+    if (pct === null || pct === undefined || pct === '') return null;
+    return total * (parseFloat(pct) / 100);
+  }
+
+  function initAllRefsDT(data) {
+    // Destroy previous
+    if (dt) {
+      dt.destroy();
+      $('#tbl_all_refs tbody').empty();
+    }
+
+    // Build rows with computed fields & safe defaults
+    const rows = (data || []).map(x => {
+      const commission_val = computeCommission(x);
+      const paid_status = x.paid_status || 'not_paid';
+      return {
+        invoice_no: x.invoice_no,
+        total_amount: parseFloat(x.total_amount || 0),
+        entry_count: parseInt(x.entry_count || 0),
+        last_seen: x.last_seen || '',
+        declared_amount: (x.declared_amount !== null && x.declared_amount !== '') ? parseFloat(x.declared_amount) : null,
+        aq_commission_pct: (x.aq_commission_pct !== null && x.aq_commission_pct !== '') ? parseFloat(x.aq_commission_pct) : null,
+        final_commission_pct: (x.final_commission_pct !== null && x.final_commission_pct !== '') ? parseFloat(x.final_commission_pct) : null,
+        commission_value: commission_val,
+        paid_status: paid_status,
+        note: x.note || '',
+        sort_id: (x.sort_id !== undefined && x.sort_id !== null) ? parseInt(x.sort_id) : null
+      };
+    });
+
+    dt = $('#tbl_all_refs').DataTable({
+      data: rows,
+      columns: [{
+          data: 'invoice_no'
+        },
+        {
+          data: 'total_amount',
+          className: 'text-end',
+          render: d => money(d)
+        },
+        {
+          data: 'entry_count',
+          className: 'text-end'
+        },
+        {
+          data: 'last_seen'
+        },
+        {
+          data: 'declared_amount',
+          className: 'text-end',
+          render: d => (d === null || d === undefined) ? '—' : money(d)
+        },
+        {
+          data: 'aq_commission_pct',
+          render: pctOrDash,
+          className: 'text-end'
+        },
+        {
+          data: 'final_commission_pct',
+          render: pctOrDash,
+          className: 'text-end'
+        },
+        {
+          data: 'commission_value',
+          className: 'text-end',
+          render: d => (d === null) ? '—' : money(d)
+        },
+        {
+          data: 'paid_status',
+          render: d => paidBadge(d),
+          orderDataType: 'dom-text',
+          type: 'string'
+        },
+        {
+          data: null,
+          orderable: false,
+          render: row => {
+            const val = esc(row.note || '');
+            return `
+            <div class="input-group input-group-sm">
+              <input class="form-control form-control-sm note-input" data-ref="${esc(row.invoice_no)}" value="${val}" placeholder="Add note...">
+              <button class="btn btn-outline-primary btn-sm save-note" data-ref="${esc(row.invoice_no)}">Save</button>
+            </div>`;
+          }
+        },
+        {
+          data: null,
+          orderable: false,
+          render: row => `<button class="btn btn-sm btn-outline-primary viewref" data-ref="${esc(row.invoice_no)}">View</button>`
+        },
+        {
+          data: 'sort_id',
+          visible: false
+        } // hidden for default ordering if present
+      ],
+      order: (rows.length && rows[0].sort_id !== null) ? [
+        [11, 'desc']
+      ] : [
+        [3, 'desc']
+      ], // sort_id desc else last_seen desc
+      paging: true,
+      pageLength: 25,
+      lengthMenu: [
+        [10, 25, 50, 100, -1],
+        [10, 25, 50, 100, 'All']
+      ],
+      deferRender: true,
+      autoWidth: false,
+      scrollY: '380px',
+      scrollCollapse: true,
+      dom: 'Bfrtip',
+      buttons: [{
+          extend: 'csvHtml5',
+          className: 'btn btn-outline-secondary btn-sm',
+          title: 'all_refs'
+        },
+        {
+          extend: 'excelHtml5',
+          className: 'btn btn-outline-secondary btn-sm',
+          title: 'all_refs'
+        },
+        {
+          extend: 'pdfHtml5',
+          className: 'btn btn-outline-secondary btn-sm',
+          title: 'all_refs',
+          orientation: 'landscape',
+          pageSize: 'A4'
+        },
+        {
+          extend: 'print',
+          className: 'btn btn-outline-secondary btn-sm',
+          title: 'All My Payment Refs'
+        },
+        {
+          extend: 'colvis',
+          className: 'btn btn-outline-secondary btn-sm',
+          text: 'Columns'
+        }
+      ],
+      footerCallback: function(row, data, start, end, display) {
+        let totalSum = 0,
+          commSum = 0;
+        for (const r of data) {
+          totalSum += parseFloat(r.total_amount || 0);
+          commSum += parseFloat(r.commission_value || 0);
+        }
+        $('#ft_total').text(money(totalSum));
+        $('#ft_commission').text(money(commSum));
+      }
+    });
+
+    // Custom date-range filter on Last (column index 3)
+    $.fn.dataTable.ext.search.push(function(settings, data, dataIndex) {
+      if (settings.nTable.id !== 'tbl_all_refs') return true;
+      const from = $('#date_from').val();
+      const to = $('#date_to').val();
+      const last = data[3]; // last_seen string
+      if (!from && !to) return true;
+      const d = last ? new Date(last.replace(' ', 'T')) : null;
+      if (!d) return false;
+      if (from && d < new Date(from)) return false;
+      if (to && d > new Date(to + 'T23:59:59')) return false;
+      return true;
+    });
+
+    $('#date_from,#date_to').off('change').on('change', () => dt.draw());
+    $('#btn_date_clear').off('click').on('click', function() {
+      $('#date_from').val('');
+      $('#date_to').val('');
+      dt.draw();
+    });
+  }
+
+  // Load DataTable data
+  function loadAllRefsDT() {
+    ajaxGet('api.php', {
+      action: 'all_refs'
+    }, r => initAllRefsDT(r.data));
+  }
+
+  /* View modal (Timestamp + Amount + Receipt) + Paid Status */
   $(document).on('click', '.viewref', function() {
     const ref = $(this).data('ref');
     currentRef = ref;
@@ -428,31 +646,21 @@ require_once __DIR__ . '/../includes/navbar.php';
       action: 'ref_entries',
       invoice_no: ref
     }, function(r) {
-      const tb = $('#tbl_ref_entries tbody');
-      tb.empty();
+      const tb = $('#tbl_ref_entries tbody').empty();
       let total = 0;
       r.data.forEach(x => {
         const amt = parseFloat(x.amount || 0);
         total += amt;
-        tb.append(`<tr>
-    <td>${x.timestamp}</td>
-    <td>${money(amt)}</td>
-    <td>${esc(x.receipt_msg)}</td>
-  </tr>`);
+        tb.append(`<tr><td>${x.timestamp}</td><td>${money(amt)}</td><td>${esc(x.receipt_msg)}</td></tr>`);
       });
-
-
-      // Use meta from API (total + saved status)
       currentRefTotal = parseFloat(r.meta?.total_amount ?? total);
       $('#ref_total').text(money(currentRefTotal));
 
       const savedStatus = r.meta?.paid_status || 'not_paid';
       const savedPartial = r.meta?.partial_amount || 0;
-
       $('#paid_status').val(savedStatus).trigger('change');
       if (savedStatus === 'partial') $('#partial_amount').val(savedPartial);
       else $('#partial_amount').val('');
-
       updatePaidSummary();
       bootstrap.Modal.getOrCreateInstance(document.getElementById('modalRef')).show();
     });
@@ -460,9 +668,8 @@ require_once __DIR__ . '/../includes/navbar.php';
 
   $('#paid_status').on('change', function() {
     const v = $(this).val();
-    if (v === 'partial') {
-      $('#partial_wrap').slideDown(120);
-    } else {
+    if (v === 'partial') $('#partial_wrap').slideDown(120);
+    else {
       $('#partial_wrap').slideUp(120);
       $('#partial_amount').val('');
     }
@@ -491,107 +698,57 @@ require_once __DIR__ . '/../includes/navbar.php';
     ajaxPost('api.php?action=set_paid_status', {
       csrf: '<?= csrf_token() ?>',
       invoice_no: currentRef,
-      status: status,
+      status,
       partial_amount: partial
     }, function(resp) {
-      // refresh the computed summary from server response (authoritative)
-      currentRefTotal = parseFloat(resp.data.total || currentRefTotal);
-      $('#paid_status').val(resp.data.status).trigger('change');
-      if (resp.data.status === 'partial') $('#partial_amount').val(resp.data.partial);
-      $('#paid_value').text(money(resp.data.partial));
-      $('#balance_value').text(money(resp.data.balance));
       alert('Paid status saved');
+      // Update badge in table if present
+      if (dt) {
+        const idx = dt.rows().indexes().toArray().find(i => dt.row(i).data().invoice_no === currentRef);
+        if (idx !== undefined) {
+          const row = dt.row(idx).data();
+          row.paid_status = resp.data.status;
+          dt.row(idx).data(row).draw(false);
+        }
+      }
     });
   });
 
-  /* Exporters for All Refs */
-  function tableToArray($table) {
-    const rows = [];
-    $table.find('thead tr, tbody tr').each(function() {
-      const row = [];
-      $(this).find('th,td').each(function() {
-        row.push($(this).text().trim());
-      });
-      rows.push(row);
+  /* Save note (inline) */
+  $(document).on('click', '.save-note', function() {
+    const ref = $(this).data('ref');
+    const $input = $(this).closest('.input-group').find('.note-input');
+    const note = $input.val();
+    ajaxPost('api.php?action=set_ref_note', {
+      csrf: '<?= csrf_token() ?>',
+      invoice_no: ref,
+      note: note
+    }, function() {
+      // Optionally give feedback
+      $input.addClass('is-valid');
+      setTimeout(() => $input.removeClass('is-valid'), 800);
     });
-    return rows;
-  }
-
-  function downloadBlob(filename, mime, content) {
-    const blob = new Blob([content], {
-      type: mime
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => {
-      URL.revokeObjectURL(url);
-      a.remove();
-    }, 0);
-  }
-
-  $('#btn_export_all_csv').on('click', function() {
-    const rows = tableToArray($('#tbl_all_refs'));
-    const csv = rows.map(r => r.map(cell => {
-      const needsQuote = /[",\n]/.test(cell);
-      return needsQuote ? `"${cell.replace(/"/g,'""')}"` : cell;
-    }).join(',')).join('\n');
-    downloadBlob('all_refs.csv', 'text/csv;charset=utf-8', csv);
   });
 
-  $('#btn_export_all_xls').on('click', function() {
-    // Excel will happily open CSV; we just use .xls extension
-    const rows = tableToArray($('#tbl_all_refs'));
-    const csv = rows.map(r => r.map(cell => {
-      const needsQuote = /[",\n]/.test(cell);
-      return needsQuote ? `"${cell.replace(/"/g,'""')}"` : cell;
-    }).join(',')).join('\n');
-    downloadBlob('all_refs.xls', 'application/vnd.ms-excel', csv);
-  });
-
-  $('#btn_export_all_pdf').on('click', function() {
-    // Simple print-to-PDF: open a new window with the table HTML
-    const w = window.open('', '_blank');
-    const html = `
-<html><head>
-  <title>All My Payment Refs</title>
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-  <style>table{font-size:12px} .table thead th{background:#f8f9fa;}</style>
-</head><body class="p-3">
-  <h5>All My Payment Refs</h5>
-  <div class="table-responsive">
-    ${document.getElementById('wrap_all_refs').innerHTML}
-  </div>
-</body></html>`;
-    w.document.open();
-    w.document.write(html);
-    w.document.close();
-    // print after the new document finishes loading
-    w.addEventListener('load', () => w.print());
-    w.document.open();
-    w.document.write(html);
-    w.document.close();
-  });
-
-  /* Add ref & other events */
+  /* Add Ref */
   $('#formAdd').on('submit', function(e) {
     e.preventDefault();
     ajaxPost('api.php?action=add_ref', $(this).serialize(), function() {
       const m = bootstrap.Modal.getOrCreateInstance(document.getElementById('modalAdd'));
       m.hide();
       loadQueue();
-      loadAllRefs();
+      loadAllRefsDT();
       alert('Added');
     });
   });
 
+  /* Export old queue table */
   $('#btn_export_queue').on('click', function(e) {
     e.preventDefault();
     window.location = 'export.php';
   });
+
+  /* KPI scope */
   scopeSel.on('change', function() {
     loadKpis();
   });
@@ -602,7 +759,7 @@ require_once __DIR__ . '/../includes/navbar.php';
     loadWeekChart();
     loadQueue();
     loadDiscovered();
-    loadAllRefs();
+    loadAllRefsDT();
   });
 </script>
 <?php include __DIR__ . '/../includes/footer.php'; ?>
