@@ -124,14 +124,14 @@ require_once __DIR__ . '/../includes/navbar.php';
           <input type="date" id="date_from" class="form-control">
           <span class="input-group-text">To</span>
           <input type="date" id="date_to" class="form-control">
-          <button class="btn btn-outline-secondary" id="btn_date_clear">Clear</button>
+          <button class="btn btn-secondary" id="btn_date_clear">Clear</button>
         </div>
 
         <!-- ⬇️ NEW: Notes keyword search -->
         <div class="input-group input-group-sm">
           <span class="input-group-text">Notes</span>
           <input type="text" id="notes_search" class="form-control" placeholder="Search notes…">
-          <button class="btn btn-outline-secondary" id="btn_notes_clear" type="button">Clear</button>
+          <button class="btn btn-secondary" id="btn_notes_clear" type="button">Clear</button>
         </div>
       </div>
     </div>
@@ -585,7 +585,7 @@ require_once __DIR__ . '/../includes/navbar.php';
       dom: 'Bfrtip',
       buttons: [{
           extend: 'csvHtml5',
-          className: 'btn btn-outline-secondary btn-sm',
+          className: 'btn btn-secondary btn-sm',
           title: 'all_refs',
           footer: true,
           exportOptions: {
@@ -596,7 +596,7 @@ require_once __DIR__ . '/../includes/navbar.php';
         },
         {
           extend: 'excelHtml5',
-          className: 'btn btn-outline-secondary btn-sm',
+          className: 'btn btn-secondary btn-sm',
           title: 'all_refs',
           footer: true,
           exportOptions: {
@@ -607,7 +607,7 @@ require_once __DIR__ . '/../includes/navbar.php';
         },
         {
           extend: 'pdfHtml5',
-          className: 'btn btn-outline-secondary btn-sm',
+          className: 'btn btn-secondary btn-sm',
           title: 'all_refs',
           footer: true,
           exportOptions: {
@@ -620,7 +620,7 @@ require_once __DIR__ . '/../includes/navbar.php';
         },
         {
           extend: 'print',
-          className: 'btn btn-outline-secondary btn-sm',
+          className: 'btn btn-secondary btn-sm',
           title: 'All My Payment Refs',
           footer: true,
           exportOptions: {
@@ -631,7 +631,7 @@ require_once __DIR__ . '/../includes/navbar.php';
         },
         {
           extend: 'colvis',
-          className: 'btn btn-outline-secondary btn-sm',
+          className: 'btn btn-secondary btn-sm',
           text: 'Columns'
         }
       ],
